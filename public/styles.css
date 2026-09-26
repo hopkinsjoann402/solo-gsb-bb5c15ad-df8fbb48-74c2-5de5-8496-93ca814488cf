@@ -665,6 +665,17 @@ tr.row-focused td { box-shadow: inset 3px 0 0 var(--accent); }
 .sight-int-list li.sight-int-blocking strong { color: var(--fail); }
 .sight-infeasible { color: var(--warn); font-weight: 600; }
 
+/* 舞台吊挂布景载荷核算 */
+.rig-table { font-size: 13px; }
+.rig-table td { vertical-align: top; }
+tr.rig-row-over td { background: var(--fail-bg); }
+.rig-over-list { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.rig-over-list li { margin: 3px 0; }
+.rig-over-list .rig-excess { color: var(--fail); }
+.rig-share-title { margin: 14px 0 8px; font-size: 14px; }
+.rig-invalid { color: var(--warn); font-size: 13px; margin: 10px 0 4px; }
+.rig-invalid-list { margin: 0 0 8px; padding-left: 20px; font-size: 12.5px; color: var(--muted); }
+
 @media (max-width: 640px) {
   .panels { grid-template-columns: 1fr; }
   .topbar { padding: 12px 16px; }

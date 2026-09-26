@@ -8,7 +8,7 @@ const MODE_LABEL = {
 const MODE_NAME = { propagate: '连续口令延误传导', classic: '区段独立校验' };
 
 const state = {
-  data: { areas: [], edges: [], actors: [], cues: [], dependencies: [], audiencePoints: [], targets: [], obstacles: [] },
+  data: { areas: [], edges: [], actors: [], cues: [], dependencies: [], audiencePoints: [], targets: [], obstacles: [], rigPoints: [], rigLoads: [] },
   validation: null,
   mode: localStorage.getItem('validate-mode') === 'classic' ? 'classic' : 'propagate',
   evacuation: null, // 已生成快照的参数 { time, exits: [areaId] }；null 表示未启用
@@ -21,6 +21,7 @@ const state = {
   replayFileName: '',
   sightlines: null, // 观众视线遮挡检查结果（pairs / summary）
   sightFocus: null, // 当前高亮的视线对键 `${audienceId}|${targetId}`
+  rigging: null, // 吊挂布景载荷核算结果（points / loads / invalidLoads / summary）
 };
 
 /* ---------- 工具 ---------- */
@@ -94,14 +95,16 @@ function actorName(id) {
 /* ---------- 数据加载与渲染 ---------- */
 
 async function refresh() {
-  const [data, validation, sightlines] = await Promise.all([
+  const [data, validation, sightlines, rigging] = await Promise.all([
     api('/api/data'),
     api(`/api/validate?mode=${state.mode}`),
     api('/api/sightlines'),
+    api('/api/rigging'),
   ]);
   state.data = data;
   state.validation = validation;
   state.sightlines = sightlines;
+  state.rigging = rigging;
   renderAreas();
   renderEdges();
   renderActors();
@@ -113,6 +116,9 @@ async function refresh() {
   renderTargets();
   renderObstacles();
   renderSightlines();
+  renderRigPoints();
+  renderRigLoads();
+  renderRigging();
   await refreshEvacuation();
 }
 
@@ -1189,6 +1195,33 @@ function bindTableActions() {
       $('obs-name').focus();
     } else if (d.delObstacle) {
       mutate(() => api(`/api/obstacles/${d.delObstacle}`, 'DELETE'), '遮挡物已删除，已重新检查视线');
+    } else if (d.editRigpoint) {
+      const p = (state.data.rigPoints || []).find((x) => x.id === d.editRigpoint);
+      if (!p) return;
+      $('rp-id').value = p.id;
+      $('rp-name').value = p.name;
+      $('rp-x').value = p.x;
+      $('rp-rated').value = p.ratedKg;
+      setEditing('rp-id', 'rp-submit', 'rp-cancel', true, '添加吊点', '保存修改');
+      $('rp-name').focus();
+    } else if (d.delRigpoint) {
+      // 被吊挂件引用时服务端会拒绝并返回原因，直接展示
+      mutate(() => api(`/api/rigPoints/${d.delRigpoint}`, 'DELETE'), '吊点已删除，已重新核算');
+    } else if (d.editRigload) {
+      const l = (state.data.rigLoads || []).find((x) => x.id === d.editRigload);
+      if (!l) return;
+      $('rl-id').value = l.id;
+      $('rl-name').value = l.name;
+      $('rl-weight').value = l.weightKg;
+      $('rl-cg').value = l.cgX;
+      $('rl-left').value = l.leftPointId;
+      $('rl-right').value = l.rightPointId;
+      $('rl-start').value = l.start;
+      $('rl-end').value = l.end;
+      setEditing('rl-id', 'rl-submit', 'rl-cancel', true, '添加吊挂件', '保存修改');
+      $('rl-name').focus();
+    } else if (d.delRigload) {
+      mutate(() => api(`/api/rigLoads/${d.delRigload}`, 'DELETE'), '吊挂件已删除，已重新核算');
     }
   });
 }
@@ -1208,6 +1241,8 @@ function bindHeaderActions() {
       clearAudienceForm();
       clearTargetForm();
       clearObstacleForm();
+      clearRigPointForm();
+      clearRigLoadForm();
       state.sightFocus = null;
       $('form-dependency').reset();
     }, '已恢复示例数据');
@@ -2025,6 +2060,261 @@ function bindSightlineForms() {
   $('obs-cancel').addEventListener('click', clearObstacleForm);
 }
 
+/* ---------- 舞台吊挂布景载荷核算 ---------- */
+
+function rigPointName(id) {
+  const p = (state.data.rigPoints || []).find((x) => x.id === id);
+  return p ? p.name : '（已删除）';
+}
+
+/** 载荷值文本：服务端已按分数精确格式化（有限小数直接给出，无限小数附精确分数） */
+function fmtKg(f) {
+  return f ? `${f.text} kg` : '—';
+}
+
+/** 吊点下拉选项（按横坐标排序，保留当前选中） */
+function fillRigSelects() {
+  const points = (state.data.rigPoints || [])
+    .slice()
+    .sort((a, b) => a.x - b.x || a.name.localeCompare(b.name, 'zh'));
+  const html =
+    '<option value="" disabled selected>选择吊点</option>' +
+    points.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}（x=${p.x} cm · 额定 ${p.ratedKg} kg）</option>`).join('');
+  for (const id of ['rl-left', 'rl-right']) {
+    const el = $(id);
+    const current = el.value;
+    el.innerHTML = html;
+    if (points.some((p) => p.id === current)) el.value = current;
+  }
+}
+
+function renderRigPoints() {
+  const sorted = (state.data.rigPoints || [])
+    .slice()
+    .sort((a, b) => a.x - b.x || a.name.localeCompare(b.name, 'zh'));
+  $('rigpoints-tbody').innerHTML =
+    sorted
+      .map(
+        (p) => `<tr>
+          <td>${escapeHtml(p.name)}</td>
+          <td>${p.x} cm</td>
+          <td>${p.ratedKg} kg</td>
+          <td class="col-ops">
+            <button class="btn btn-small" data-edit-rigpoint="${p.id}">编辑</button>
+            <button class="btn btn-danger" data-del-rigpoint="${p.id}">删除</button>
+          </td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="4" class="empty-hint">暂无吊点</td></tr>';
+}
+
+function renderRigLoads() {
+  $('rigloads-tbody').innerHTML =
+    (state.data.rigLoads || [])
+      .map(
+        (l) => `<tr>
+          <td>${escapeHtml(l.name)}</td>
+          <td>${l.weightKg} kg</td>
+          <td>${l.cgX} cm</td>
+          <td>${escapeHtml(rigPointName(l.leftPointId))}</td>
+          <td>${escapeHtml(rigPointName(l.rightPointId))}</td>
+          <td>${l.start}~${l.end} 秒</td>
+          <td class="col-ops">
+            <button class="btn btn-small" data-edit-rigload="${l.id}">编辑</button>
+            <button class="btn btn-danger" data-del-rigload="${l.id}">删除</button>
+          </td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="7" class="empty-hint">暂无吊挂件</td></tr>';
+}
+
+const RIG_STATUS = {
+  over: '<span class="status-pill fail">❌ 超额</span>',
+  ok: '<span class="status-pill ok">✅ 未超额</span>',
+  idle: '<span class="empty-hint">⚪ 无载荷</span>',
+};
+
+/** 吊点核算结果表：峰值载荷、状态与合并后的超额区间 */
+function renderRigPointResults(res) {
+  const el = $('rig-results');
+  if (!res.points.length) {
+    el.innerHTML = '<p class="empty-hint">暂无吊点：请先在下方「吊点」面板中添加同一横梁上的吊点。</p>';
+    return;
+  }
+  const rows = res.points
+    .map((p) => {
+      const peakCell = p.peak
+        ? `<strong>${fmtKg(p.peak)}</strong><span class="time-detail">首次峰值区间 ${p.peakStart}~${p.peakEnd} 秒</span>`
+        : '<span class="empty-hint">—</span>';
+      const overCell =
+        p.status === 'idle'
+          ? '<span class="empty-hint">—</span>'
+          : p.overloads.length
+            ? `<ul class="rig-over-list">${p.overloads
+                .map(
+                  (o) =>
+                    `<li><strong>${o.start}~${o.end} 秒</strong>（持续 ${o.durationSeconds} 秒）` +
+                    `<span class="time-detail">峰值 ${fmtKg(o.peakLoad)} · 超额 <strong class="rig-excess">${o.excess.text} kg</strong></span></li>`
+                )
+                .join('')}</ul>`
+            : '<span class="imp-ok">✅ 全程未超额</span>';
+      const statusCell =
+        p.status === 'over' ? `${RIG_STATUS.over}<span class="time-detail">${p.overloads.length} 段超额区间</span>` : RIG_STATUS[p.status];
+      return `<tr class="rig-row-${p.status}">
+        <td><strong>${escapeHtml(p.name)}</strong><span class="time-detail">x = ${p.x} cm · ${p.loadCount} 件分担</span></td>
+        <td>${p.ratedKg} kg</td>
+        <td>${peakCell}</td>
+        <td>${statusCell}</td>
+        <td>${overCell}</td>
+      </tr>`;
+    })
+    .join('');
+  el.innerHTML = `<table class="rig-table">
+    <thead><tr><th>吊点</th><th>额定载荷</th><th>峰值载荷</th><th>状态</th><th>超额区间（已合并相邻连续区间）</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+/** 吊挂件分担明细表：力矩平衡算出的左右分担重量 */
+function renderRigShares(res) {
+  const el = $('rig-shares');
+  const invalid = (res.invalidLoads || [])
+    .map((l) => `<li>「${escapeHtml(l.name)}」：${escapeHtml(l.reason)}</li>`)
+    .join('');
+  const invalidHtml = invalid
+    ? `<p class="rig-invalid">⚠️ ${res.invalidLoads.length} 件吊挂件几何非法，未参与核算（可能为手工编辑数据文件所致）：</p><ul class="rig-invalid-list">${invalid}</ul>`
+    : '';
+  if (!res.loads.length) {
+    el.innerHTML = `${invalidHtml}<p class="empty-hint">暂无吊挂件：添加吊挂件后此处显示力矩平衡分担明细。</p>`;
+    return;
+  }
+  const rows = res.loads
+    .map(
+      (l) => `<tr>
+        <td>${escapeHtml(l.name)}</td>
+        <td>${l.weightKg} kg</td>
+        <td>${l.cgX} cm</td>
+        <td>${l.start}~${l.end} 秒</td>
+        <td>${escapeHtml(l.leftPointName)}<span class="time-detail">x = ${l.leftX} cm</span></td>
+        <td><strong>${fmtKg(l.leftShare)}</strong></td>
+        <td>${escapeHtml(l.rightPointName)}<span class="time-detail">x = ${l.rightX} cm</span></td>
+        <td><strong>${fmtKg(l.rightShare)}</strong></td>
+      </tr>`
+    )
+    .join('');
+  el.innerHTML = `${invalidHtml}
+    <h4 class="rig-share-title">吊挂件分担明细（力矩平衡，有理数精确值）</h4>
+    <table class="rig-table">
+      <thead><tr><th>吊挂件</th><th>重量</th><th>重心 x</th><th>生效时段</th><th>左吊点</th><th>左分担</th><th>右吊点</th><th>右分担</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderRigging() {
+  const res = state.rigging;
+  if (!res) return;
+  const s = res.summary;
+  $('rig-summary').innerHTML = `
+    <div class="badge"><span class="num">${s.points}</span><span class="label">吊点</span></div>
+    <div class="badge"><span class="num">${s.loads}</span><span class="label">吊挂件</span></div>
+    <div class="badge ${s.overloadedPoints ? 'fail' : 'ok'}"><span class="num">${s.overloadedPoints}</span><span class="label">超额吊点</span></div>
+    <div class="badge ${s.overloadIntervals ? 'fail' : 'ok'}"><span class="num">${s.overloadIntervals}</span><span class="label">超额区间</span></div>
+    ${s.invalidLoads ? `<div class="badge warn"><span class="num">${s.invalidLoads}</span><span class="label">非法吊挂件未核算</span></div>` : ''}
+  `;
+  renderRigPointResults(res);
+  renderRigShares(res);
+  fillRigSelects();
+}
+
+function clearRigPointForm() {
+  $('form-rigpoint').reset();
+  setEditing('rp-id', 'rp-submit', 'rp-cancel', false, '添加吊点', '保存修改');
+}
+function clearRigLoadForm() {
+  $('form-rigload').reset();
+  setEditing('rl-id', 'rl-submit', 'rl-cancel', false, '添加吊挂件', '保存修改');
+}
+
+/** 读取非负整数输入；非法时 toast 并返回 null */
+function readIntInputs(fields) {
+  const out = {};
+  for (const [key, id, label] of fields) {
+    const raw = $(id).value.trim();
+    if (!/^\d+$/.test(raw)) {
+      toast(`${label}必须是不小于 0 的整数`, true);
+      return null;
+    }
+    out[key] = parseInt(raw, 10);
+  }
+  return out;
+}
+
+function bindRiggingForms() {
+  $('form-rigpoint').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const cm = readCmInputs([['x', 'rp-x', '横坐标']]);
+    if (!cm) return;
+    const rated = readIntInputs([['ratedKg', 'rp-rated', '额定载荷']]);
+    if (!rated) return;
+    const id = $('rp-id').value;
+    const body = { name: $('rp-name').value.trim(), x: cm.x, ratedKg: rated.ratedKg };
+    mutate(async () => {
+      if (id) await api(`/api/rigPoints/${id}`, 'PUT', body);
+      else await api('/api/rigPoints', 'POST', body);
+      clearRigPointForm();
+    }, id ? '吊点已更新，已重新核算' : '吊点已添加');
+  });
+
+  $('form-rigload').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const weight = readIntInputs([['weightKg', 'rl-weight', '重量']]);
+    if (!weight) return;
+    if (weight.weightKg < 1) {
+      toast('重量必须是不小于 1 的整数千克', true);
+      return;
+    }
+    const cm = readCmInputs([['cgX', 'rl-cg', '重心横坐标']]);
+    if (!cm) return;
+    const times = readIntInputs([
+      ['start', 'rl-start', '生效开始'],
+      ['end', 'rl-end', '生效结束'],
+    ]);
+    if (!times) return;
+    if (times.start >= times.end) {
+      toast('生效开始秒数必须小于结束秒数', true);
+      return;
+    }
+    const leftPointId = $('rl-left').value;
+    const rightPointId = $('rl-right').value;
+    if (!leftPointId || !rightPointId) {
+      toast('请选择左右吊点', true);
+      return;
+    }
+    if (leftPointId === rightPointId) {
+      toast('左右吊点不能是同一吊点', true);
+      return;
+    }
+    const id = $('rl-id').value;
+    const body = {
+      name: $('rl-name').value.trim(),
+      weightKg: weight.weightKg,
+      cgX: cm.cgX,
+      leftPointId,
+      rightPointId,
+      start: times.start,
+      end: times.end,
+    };
+    mutate(async () => {
+      if (id) await api(`/api/rigLoads/${id}`, 'PUT', body);
+      else await api('/api/rigLoads', 'POST', body);
+      clearRigLoadForm();
+    }, id ? '吊挂件已更新，已重新核算' : '吊挂件已添加');
+  });
+
+  $('rp-cancel').addEventListener('click', clearRigPointForm);
+  $('rl-cancel').addEventListener('click', clearRigLoadForm);
+}
+
 /* ---------- 启动 ---------- */
 
 (async function init() {
@@ -2037,6 +2327,7 @@ function bindSightlineForms() {
   bindReplay();
   bindSightlineForms();
   bindSightMap();
+  bindRiggingForms();
   setMode(state.mode);
   try {
     await refresh();

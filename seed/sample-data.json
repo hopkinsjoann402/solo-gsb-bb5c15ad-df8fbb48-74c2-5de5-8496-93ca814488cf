@@ -63,5 +63,21 @@
     { "id": "obs-set-piece", "name": "舞台边沿布景", "x": 1000, "y": 300, "width": 1000, "depth": 200, "height": 40 },
     { "id": "obs-front-head", "name": "前排观众头部", "x": 0, "y": -700, "width": 3000, "depth": 40, "height": 110 },
     { "id": "obs-pit-fence", "name": "乐池围栏", "x": 1200, "y": -200, "width": 600, "depth": 100, "height": 150 }
+  ],
+  "rigPoints": [
+    { "id": "rig-p1", "name": "1 号吊点", "x": 0, "ratedKg": 250 },
+    { "id": "rig-p2", "name": "2 号吊点", "x": 300, "ratedKg": 500 },
+    { "id": "rig-p3", "name": "3 号吊点", "x": 600, "ratedKg": 700 },
+    { "id": "rig-p4", "name": "4 号吊点", "x": 900, "ratedKg": 400 }
+  ],
+  "rigLoads": [
+    { "id": "rig-load-mu", "name": "幕布「森林背景」", "weightKg": 300, "cgX": 150, "leftPointId": "rig-p1", "rightPointId": "rig-p2", "start": 0, "end": 60 },
+    { "id": "rig-load-deng", "name": "灯组「顶光排」", "weightKg": 240, "cgX": 450, "leftPointId": "rig-p2", "rightPointId": "rig-p3", "start": 20, "end": 80 },
+    { "id": "rig-load-jing", "name": "布景「城堡墙」", "weightKg": 360, "cgX": 700, "leftPointId": "rig-p3", "rightPointId": "rig-p4", "start": 40, "end": 100 },
+    { "id": "rig-load-yue", "name": "吊景「月亮」", "weightKg": 200, "cgX": 100, "leftPointId": "rig-p1", "rightPointId": "rig-p2", "start": 60, "end": 120 },
+    { "id": "rig-load-sha", "name": "纱幕「薄雾」", "weightKg": 150, "cgX": 550, "leftPointId": "rig-p2", "rightPointId": "rig-p3", "start": 50, "end": 90 },
+    { "id": "rig-load-pei", "name": "配重「平衡块」", "weightKg": 350, "cgX": 200, "leftPointId": "rig-p1", "rightPointId": "rig-p2", "start": 30, "end": 90 },
+    { "id": "rig-load-tian", "name": "天幕「星空」", "weightKg": 390, "cgX": 800, "leftPointId": "rig-p3", "rightPointId": "rig-p4", "start": 70, "end": 110 },
+    { "id": "rig-load-huan", "name": "光环「特效」", "weightKg": 100, "cgX": 700, "leftPointId": "rig-p3", "rightPointId": "rig-p4", "start": 30, "end": 95 }
   ]
 }

@@ -19,13 +19,18 @@ function ensureDataFile() {
 
 /** 规整数据结构：补齐缺失的集合与基线存储（兼容旧版数据文件） */
 function normalize(data) {
-  for (const key of ['areas', 'edges', 'actors', 'cues', 'dependencies', 'audiencePoints', 'targets', 'obstacles']) {
+  for (const key of ['areas', 'edges', 'actors', 'cues', 'dependencies', 'audiencePoints', 'targets', 'obstacles', 'rigPoints', 'rigLoads']) {
     if (!Array.isArray(data[key])) data[key] = [];
   }
   // 清理历史残留：依赖任一端口令不存在（如手工编辑过数据文件）时直接丢弃
   const cueIds = new Set(data.cues.map((c) => c.id));
   data.dependencies = data.dependencies.filter(
     (d) => d && cueIds.has(d.predecessorId) && cueIds.has(d.successorId)
+  );
+  // 清理历史残留：吊挂件引用的吊点不存在时直接丢弃（几何非法的吊挂件保留，核算时跳过并在结果中标注）
+  const rigPointIds = new Set(data.rigPoints.map((p) => p.id));
+  data.rigLoads = data.rigLoads.filter(
+    (l) => l && rigPointIds.has(l.leftPointId) && rigPointIds.has(l.rightPointId)
   );
   // baselines: { [mode]: { savedAt, result } }，基线随数据持久化
   if (!data.baselines || typeof data.baselines !== 'object' || Array.isArray(data.baselines)) {
