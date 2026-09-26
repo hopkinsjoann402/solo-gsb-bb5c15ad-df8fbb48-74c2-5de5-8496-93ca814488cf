@@ -63,5 +63,25 @@
     { "id": "obs-set-piece", "name": "舞台边沿布景", "x": 1000, "y": 300, "width": 1000, "depth": 200, "height": 40 },
     { "id": "obs-front-head", "name": "前排观众头部", "x": 0, "y": -700, "width": 3000, "depth": 40, "height": 110 },
     { "id": "obs-pit-fence", "name": "乐池围栏", "x": 1200, "y": -200, "width": 600, "depth": 100, "height": 150 }
+  ],
+  "rigPoints": [
+    { "id": "rig-a", "name": "吊点 A", "x": 0, "ratedLoad": 500 },
+    { "id": "rig-b", "name": "吊点 B", "x": 600, "ratedLoad": 500 },
+    { "id": "rig-c", "name": "吊点 C", "x": 1200, "ratedLoad": 300 },
+    { "id": "rig-d", "name": "吊点 D", "x": 1800, "ratedLoad": 120 },
+    { "id": "rig-e", "name": "吊点 E", "x": 2400, "ratedLoad": 120 },
+    { "id": "rig-f", "name": "吊点 F", "x": 3000, "ratedLoad": 200 },
+    { "id": "rig-g", "name": "吊点 G", "x": 3600, "ratedLoad": 100 }
+  ],
+  "rigItems": [
+    { "id": "rig-i1", "name": "天幕景片", "weight": 240, "cogX": 200, "leftPointId": "rig-a", "rightPointId": "rig-b", "start": 0, "end": 90 },
+    { "id": "rig-i2", "name": "侧幕条", "weight": 180, "cogX": 450, "leftPointId": "rig-a", "rightPointId": "rig-b", "start": 30, "end": 60 },
+    { "id": "rig-i3", "name": "吊灯架", "weight": 400, "cogX": 900, "leftPointId": "rig-b", "rightPointId": "rig-c", "start": 10, "end": 50 },
+    { "id": "rig-i4", "name": "横幅", "weight": 350, "cogX": 1100, "leftPointId": "rig-b", "rightPointId": "rig-c", "start": 40, "end": 70 },
+    { "id": "rig-i5", "name": "灯排一", "weight": 200, "cogX": 2000, "leftPointId": "rig-d", "rightPointId": "rig-e", "start": 0, "end": 30 },
+    { "id": "rig-i6", "name": "灯排二", "weight": 180, "cogX": 1950, "leftPointId": "rig-d", "rightPointId": "rig-e", "start": 30, "end": 60 },
+    { "id": "rig-i7", "name": "配重甲", "weight": 100, "cogX": 3200, "leftPointId": "rig-f", "rightPointId": "rig-g", "start": 0, "end": 120 },
+    { "id": "rig-i8", "name": "配重乙", "weight": 100, "cogX": 3200, "leftPointId": "rig-f", "rightPointId": "rig-g", "start": 0, "end": 120 },
+    { "id": "rig-i9", "name": "配重丙", "weight": 100, "cogX": 3200, "leftPointId": "rig-f", "rightPointId": "rig-g", "start": 0, "end": 120 }
   ]
 }

@@ -8,7 +8,7 @@ const MODE_LABEL = {
 const MODE_NAME = { propagate: '连续口令延误传导', classic: '区段独立校验' };
 
 const state = {
-  data: { areas: [], edges: [], actors: [], cues: [], dependencies: [], audiencePoints: [], targets: [], obstacles: [] },
+  data: { areas: [], edges: [], actors: [], cues: [], dependencies: [], audiencePoints: [], targets: [], obstacles: [], rigPoints: [], rigItems: [] },
   validation: null,
   mode: localStorage.getItem('validate-mode') === 'classic' ? 'classic' : 'propagate',
   evacuation: null, // 已生成快照的参数 { time, exits: [areaId] }；null 表示未启用
@@ -21,6 +21,7 @@ const state = {
   replayFileName: '',
   sightlines: null, // 观众视线遮挡检查结果（pairs / summary）
   sightFocus: null, // 当前高亮的视线对键 `${audienceId}|${targetId}`
+  rigging: null, // 吊挂布景载荷核算结果（points / items / summary）
 };
 
 /* ---------- 工具 ---------- */
@@ -94,14 +95,16 @@ function actorName(id) {
 /* ---------- 数据加载与渲染 ---------- */
 
 async function refresh() {
-  const [data, validation, sightlines] = await Promise.all([
+  const [data, validation, sightlines, rigging] = await Promise.all([
     api('/api/data'),
     api(`/api/validate?mode=${state.mode}`),
     api('/api/sightlines'),
+    api('/api/rigging'),
   ]);
   state.data = data;
   state.validation = validation;
   state.sightlines = sightlines;
+  state.rigging = rigging;
   renderAreas();
   renderEdges();
   renderActors();
@@ -113,6 +116,9 @@ async function refresh() {
   renderTargets();
   renderObstacles();
   renderSightlines();
+  renderRigPoints();
+  renderRigItems();
+  renderRigging();
   await refreshEvacuation();
 }
 
@@ -938,6 +944,10 @@ function refreshSelects() {
   fillSelect($('edge-b'), state.data.areas, '选择区域 B');
   fillSelect($('cue-actor'), state.data.actors, '选择演员');
   fillSelect($('cue-area'), state.data.areas, '选择目标区域');
+  // 吊点下拉按横梁横坐标升序展示
+  const rigPointsSorted = (state.data.rigPoints || []).slice().sort((a, b) => a.x - b.x);
+  fillSelect($('rigi-left'), rigPointsSorted, '选择左吊点');
+  fillSelect($('rigi-right'), rigPointsSorted, '选择右吊点');
 }
 
 /* ---------- 封闭时段编辑器 ---------- */
@@ -1189,6 +1199,33 @@ function bindTableActions() {
       $('obs-name').focus();
     } else if (d.delObstacle) {
       mutate(() => api(`/api/obstacles/${d.delObstacle}`, 'DELETE'), '遮挡物已删除，已重新检查视线');
+    } else if (d.editRigpoint) {
+      const p = (state.data.rigPoints || []).find((x) => x.id === d.editRigpoint);
+      if (!p) return;
+      $('rigp-id').value = p.id;
+      $('rigp-name').value = p.name;
+      $('rigp-x').value = p.x;
+      $('rigp-rated').value = p.ratedLoad;
+      setEditing('rigp-id', 'rigp-submit', 'rigp-cancel', true, '添加吊点', '保存修改');
+      $('rigp-name').focus();
+    } else if (d.delRigpoint) {
+      // 被吊挂件引用时服务端返回 409 并提示，此处直接发起删除即可
+      mutate(() => api(`/api/rigPoints/${d.delRigpoint}`, 'DELETE'), '吊点已删除，已重新核算');
+    } else if (d.editRigitem) {
+      const it = (state.data.rigItems || []).find((x) => x.id === d.editRigitem);
+      if (!it) return;
+      $('rigi-id').value = it.id;
+      $('rigi-name').value = it.name;
+      $('rigi-weight').value = it.weight;
+      $('rigi-cog').value = it.cogX;
+      $('rigi-left').value = it.leftPointId;
+      $('rigi-right').value = it.rightPointId;
+      $('rigi-start').value = fmtTime(it.start);
+      $('rigi-end').value = fmtTime(it.end);
+      setEditing('rigi-id', 'rigi-submit', 'rigi-cancel', true, '添加吊挂件', '保存修改');
+      $('rigi-name').focus();
+    } else if (d.delRigitem) {
+      mutate(() => api(`/api/rigItems/${d.delRigitem}`, 'DELETE'), '吊挂件已删除，已重新核算');
     }
   });
 }
@@ -1208,6 +1245,8 @@ function bindHeaderActions() {
       clearAudienceForm();
       clearTargetForm();
       clearObstacleForm();
+      clearRigPointForm();
+      clearRigItemForm();
       state.sightFocus = null;
       $('form-dependency').reset();
     }, '已恢复示例数据');
@@ -2025,6 +2064,226 @@ function bindSightlineForms() {
   $('obs-cancel').addEventListener('click', clearObstacleForm);
 }
 
+/* ---------- 吊挂布景载荷核算 ---------- */
+
+/** 载荷显示：整数直接显示，否则保留 2 位小数并附精确分数（服务端按分数精确累计） */
+function fmtLoad(f) {
+  const num = Number(f.num);
+  const den = Number(f.den);
+  if (den === 1) return String(num);
+  const dec = (num / den).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+  return (num * 100) % den === 0 ? dec : `${dec}…（=${f.num}/${f.den}）`;
+}
+
+function rigPointName(id) {
+  const p = (state.data.rigPoints || []).find((x) => x.id === id);
+  return p ? p.name : '（已删除）';
+}
+
+function renderRigSummary() {
+  const s = state.rigging && state.rigging.summary;
+  if (!s) return;
+  $('rig-summary').innerHTML = `
+    <div class="badge"><span class="num">${s.points}</span><span class="label">吊点</span></div>
+    <div class="badge"><span class="num">${s.items}</span><span class="label">吊挂件</span></div>
+    <div class="badge ${s.overloadedPoints ? 'fail' : 'ok'}"><span class="num">${s.overloadedPoints}</span><span class="label">超额吊点</span></div>
+    <div class="badge ${s.overloadIntervals ? 'fail' : 'ok'}"><span class="num">${s.overloadIntervals}</span><span class="label">超额区间</span></div>
+  `;
+}
+
+/** 逐吊点核算结果表：峰值载荷、状态与合并后的超额区间（含超额量） */
+function renderRigPointResults() {
+  const res = state.rigging;
+  if (!res) return;
+  if (res.points.length === 0) {
+    $('rig-results').innerHTML = '<p class="empty-hint">暂无吊点：请在下方「吊点（同一横梁）」面板添加吊点，再维护吊挂件。</p>';
+    return;
+  }
+  const rows = res.points
+    .map((p) => {
+      const statusCell = p.overloaded
+        ? '<span class="status-pill fail">⚠ 超额</span>'
+        : '<span class="status-pill ok">✅ 正常</span>';
+      const peakCell =
+        `${fmtLoad(p.peak)} kg` +
+        (p.peakInterval
+          ? `<span class="time-detail">首次出现于 ${fmtTime(p.peakInterval.start)} ~ ${fmtTime(p.peakInterval.end)}</span>`
+          : '');
+      const ivCell = p.intervals.length
+        ? `<ul class="rig-interval-list">${p.intervals
+            .map(
+              (iv) =>
+                `<li><code>[${fmtTime(iv.start)}, ${fmtTime(iv.end)})</code> · ${iv.durationSeconds} 秒` +
+                `<span class="time-detail">区间峰值 ${fmtLoad(iv.peakLoad)} kg · <strong>超额 ${fmtLoad(iv.excess)} kg</strong></span></li>`
+            )
+            .join('')}</ul>`
+        : '<span class="empty-hint">无超额区间</span>';
+      return `<tr class="${p.overloaded ? 'rig-row-over' : 'rig-row-ok'}">
+        <td><strong>${escapeHtml(p.name)}</strong><span class="time-detail">横坐标 ${p.x} cm</span></td>
+        <td>${p.ratedLoad} kg</td>
+        <td>${peakCell}</td>
+        <td>${statusCell}</td>
+        <td>${ivCell}</td>
+      </tr>`;
+    })
+    .join('');
+  $('rig-results').innerHTML = `<table class="rig-table">
+    <thead><tr><th>吊点</th><th>额定载荷</th><th>峰值载荷</th><th>状态</th><th>超额区间（已合并相邻连续超额）· 超额量</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+/** 吊挂件分担明细表：每件对左 / 右吊点的力矩平衡分担重量 */
+function renderRigItemShares() {
+  const res = state.rigging;
+  if (!res) return;
+  if (res.items.length === 0) {
+    $('rig-item-shares').innerHTML = '<p class="empty-hint">暂无吊挂件，添加后将在此列出每件对两吊点的分担重量。</p>';
+    return;
+  }
+  const rows = res.items
+    .map(
+      (it) => `<tr>
+        <td><strong>${escapeHtml(it.name)}</strong><span class="time-detail">生效 [${fmtTime(it.start)}, ${fmtTime(it.end)})</span></td>
+        <td>${it.weight} kg</td>
+        <td>${it.cogX} cm</td>
+        <td>${escapeHtml(it.leftPointName)}<span class="time-detail">${fmtLoad(it.leftShare)} kg</span></td>
+        <td>${escapeHtml(it.rightPointName)}<span class="time-detail">${fmtLoad(it.rightShare)} kg</span></td>
+      </tr>`
+    )
+    .join('');
+  $('rig-item-shares').innerHTML = `<h3 class="rig-share-title">吊挂件分担明细（力矩平衡，两吊点分担之和恒等于重量）</h3>
+    <table class="rig-table">
+      <thead><tr><th>吊挂件（生效时段）</th><th>重量</th><th>重心横坐标</th><th>左吊点 · 分担</th><th>右吊点 · 分担</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderRigging() {
+  renderRigSummary();
+  renderRigPointResults();
+  renderRigItemShares();
+}
+
+/* ---------- 吊点 / 吊挂件 管理 ---------- */
+
+function renderRigPoints() {
+  $('rigpoints-tbody').innerHTML =
+    (state.data.rigPoints || [])
+      .slice()
+      .sort((a, b) => a.x - b.x || a.name.localeCompare(b.name, 'zh'))
+      .map(
+        (p) => `<tr>
+          <td>${escapeHtml(p.name)}</td>
+          <td>${p.x} cm</td>
+          <td>${p.ratedLoad} kg</td>
+          <td class="col-ops">
+            <button class="btn btn-small" data-edit-rigpoint="${p.id}">编辑</button>
+            <button class="btn btn-danger" data-del-rigpoint="${p.id}">删除</button>
+          </td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="4" class="empty-hint">暂无吊点</td></tr>';
+}
+
+function renderRigItems() {
+  $('rigitems-tbody').innerHTML =
+    (state.data.rigItems || [])
+      .slice()
+      .sort((a, b) => a.start - b.start || a.end - b.end || a.name.localeCompare(b.name, 'zh'))
+      .map(
+        (it) => `<tr>
+          <td>${escapeHtml(it.name)}</td>
+          <td>${it.weight} kg</td>
+          <td>${it.cogX} cm</td>
+          <td>${escapeHtml(rigPointName(it.leftPointId))}</td>
+          <td>${escapeHtml(rigPointName(it.rightPointId))}</td>
+          <td>${fmtTime(it.start)} ~ ${fmtTime(it.end)}</td>
+          <td class="col-ops">
+            <button class="btn btn-small" data-edit-rigitem="${it.id}">编辑</button>
+            <button class="btn btn-danger" data-del-rigitem="${it.id}">删除</button>
+          </td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="7" class="empty-hint">暂无吊挂件</td></tr>';
+}
+
+function clearRigPointForm() {
+  $('form-rigpoint').reset();
+  setEditing('rigp-id', 'rigp-submit', 'rigp-cancel', false, '添加吊点', '保存修改');
+}
+function clearRigItemForm() {
+  $('form-rigitem').reset();
+  setEditing('rigi-id', 'rigi-submit', 'rigi-cancel', false, '添加吊挂件', '保存修改');
+}
+
+/** 读取整数输入；非法时 toast 并返回 null（label 需含单位，如「重量（千克）」） */
+function readIntInputs(fields) {
+  const out = {};
+  for (const [key, id, label] of fields) {
+    const raw = $(id).value.trim();
+    if (!/^-?\d+$/.test(raw)) {
+      toast(`${label}必须是整数`, true);
+      return null;
+    }
+    out[key] = parseInt(raw, 10);
+  }
+  return out;
+}
+
+function bindRigForms() {
+  $('form-rigpoint').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const vals = readIntInputs([
+      ['x', 'rigp-x', '横坐标（厘米）'],
+      ['ratedLoad', 'rigp-rated', '额定载荷（千克）'],
+    ]);
+    if (!vals) return;
+    const id = $('rigp-id').value;
+    const body = { name: $('rigp-name').value.trim(), ...vals };
+    mutate(async () => {
+      if (id) await api(`/api/rigPoints/${id}`, 'PUT', body);
+      else await api('/api/rigPoints', 'POST', body);
+      clearRigPointForm();
+    }, id ? '吊点已更新，已重新核算' : '吊点已添加');
+  });
+
+  $('form-rigitem').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const vals = readIntInputs([
+      ['weight', 'rigi-weight', '重量（千克）'],
+      ['cogX', 'rigi-cog', '重心横坐标（厘米）'],
+    ]);
+    if (!vals) return;
+    const start = parseTime($('rigi-start').value);
+    const end = parseTime($('rigi-end').value);
+    if (Number.isNaN(start) || Number.isNaN(end)) {
+      toast('生效起止格式不正确，请输入秒数（如 90）或 mm:ss（如 01:30）', true);
+      return;
+    }
+    if (start >= end) {
+      toast('生效开始秒数必须小于结束秒数', true);
+      return;
+    }
+    const leftPointId = $('rigi-left').value;
+    const rightPointId = $('rigi-right').value;
+    if (!leftPointId || !rightPointId) {
+      toast('请选择左右吊点', true);
+      return;
+    }
+    const id = $('rigi-id').value;
+    const body = { name: $('rigi-name').value.trim(), ...vals, leftPointId, rightPointId, start, end };
+    mutate(async () => {
+      if (id) await api(`/api/rigItems/${id}`, 'PUT', body);
+      else await api('/api/rigItems', 'POST', body);
+      clearRigItemForm();
+    }, id ? '吊挂件已更新，已重新核算' : '吊挂件已添加');
+  });
+
+  $('rigp-cancel').addEventListener('click', clearRigPointForm);
+  $('rigi-cancel').addEventListener('click', clearRigItemForm);
+}
+
 /* ---------- 启动 ---------- */
 
 (async function init() {
@@ -2037,6 +2296,7 @@ function bindSightlineForms() {
   bindReplay();
   bindSightlineForms();
   bindSightMap();
+  bindRigForms();
   setMode(state.mode);
   try {
     await refresh();

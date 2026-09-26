@@ -12,7 +12,7 @@
       <span class="logo">🎭</span>
       <div>
         <h1>舞台走位校验系统</h1>
-        <p class="subtitle">区域连接图 · 通道容量与封闭时段 · 到位口令时间校验 · 通道占用冲突 · 观众视线遮挡检查</p>
+        <p class="subtitle">区域连接图 · 通道容量与封闭时段 · 到位口令时间校验 · 通道占用冲突 · 观众视线遮挡检查 · 吊挂布景载荷核算</p>
       </div>
     </div>
     <div class="actions">
@@ -152,6 +152,64 @@
       </p>
       <div id="sight-results"></div>
     </section>
+
+    <!-- 吊挂布景载荷核算 -->
+    <section class="card" id="panel-rigging">
+      <h2>🏗 吊挂布景载荷核算</h2>
+      <p class="mode-hint">
+        维护同一横梁上的<strong>吊点</strong>（横坐标、额定载荷）与<strong>吊挂件</strong>（重量、重心横坐标、左右吊点、生效时段 <code>[起, 止)</code>）。
+        每件按<strong>力矩平衡</strong>分担到两吊点：左点分担 = 重量 ×（右点横坐标 − 重心横坐标）÷ 吊点间距，右点分担 = 重量 ×（重心横坐标 − 左点横坐标）÷ 吊点间距；
+        累计与比较全程使用<strong>有理数（分数）精确运算</strong>——累计载荷恰好等于额定载荷不算超额，临界值不会因舍入被误判。
+        同一秒<strong>结束先于开始</strong>（半开时段不叠加），逐吊点输出峰值载荷与超额区间（载荷 &gt; 额定载荷），首尾相接的连续超额自动合并；
+        删除被吊挂件引用的吊点会被拒绝。
+      </p>
+      <div id="rig-summary" class="summary"></div>
+      <div id="rig-results"></div>
+      <div id="rig-item-shares"></div>
+    </section>
+
+    <!-- 数据管理 -->
+    <div class="panels">
+      <section class="card" id="panel-rigpoints">
+        <h2>吊点（同一横梁）</h2>
+        <form id="form-rigpoint" class="entity-form">
+          <input type="hidden" id="rigp-id" />
+          <input type="text" id="rigp-name" placeholder="吊点名称，如：1 号吊点" required maxlength="30" />
+          <input type="number" id="rigp-x" placeholder="横坐标 (cm)" min="-1000000" max="1000000" step="1" required />
+          <input type="number" id="rigp-rated" placeholder="额定载荷 (kg)" min="1" max="1000000" step="1" required />
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="rigp-submit">添加吊点</button>
+            <button type="button" class="btn btn-ghost hidden" id="rigp-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>名称</th><th>横坐标</th><th>额定载荷</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="rigpoints-tbody"></tbody>
+        </table>
+      </section>
+
+      <section class="card" id="panel-rigitems">
+        <h2>吊挂件</h2>
+        <form id="form-rigitem" class="entity-form">
+          <input type="hidden" id="rigi-id" />
+          <input type="text" id="rigi-name" placeholder="吊挂件名称，如：天幕景片" required maxlength="30" />
+          <input type="number" id="rigi-weight" placeholder="重量 (kg)" min="1" max="1000000" step="1" required />
+          <input type="number" id="rigi-cog" placeholder="重心横坐标 (cm)" min="-1000000" max="1000000" step="1" required />
+          <select id="rigi-left" required></select>
+          <select id="rigi-right" required></select>
+          <input type="text" id="rigi-start" placeholder="生效开始，如 30 或 00:30" required />
+          <input type="text" id="rigi-end" placeholder="生效结束，如 90 或 01:30" required />
+          <div class="form-buttons">
+            <button type="submit" class="btn btn-accent" id="rigi-submit">添加吊挂件</button>
+            <button type="button" class="btn btn-ghost hidden" id="rigi-cancel">取消编辑</button>
+          </div>
+        </form>
+        <table>
+          <thead><tr><th>名称</th><th>重量</th><th>重心</th><th>左吊点</th><th>右吊点</th><th>生效时段</th><th class="col-ops">操作</th></tr></thead>
+          <tbody id="rigitems-tbody"></tbody>
+        </table>
+      </section>
+    </div>
 
     <!-- 数据管理 -->
     <div class="panels">

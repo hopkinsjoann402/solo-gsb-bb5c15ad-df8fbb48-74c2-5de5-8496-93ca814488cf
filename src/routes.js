@@ -14,6 +14,7 @@ const {
 } = require('./import');
 const { buildReplay, ImportFileError: ReplayFileError } = require('./replay');
 const { analyzeSightlines } = require('./sightline');
+const { analyzeRigging } = require('./rigging');
 
 const router = express.Router();
 
@@ -87,6 +88,33 @@ function isCmCoord(v) {
 
 function isCmHeight(v) {
   return Number.isInteger(v) && v >= 0 && v <= CM_HEIGHT_MAX;
+}
+
+/** 吊挂载荷核算：重量 / 额定载荷（整数千克） */
+const RIG_LOAD_MAX = 1000000;
+
+function isRigLoad(v) {
+  return Number.isInteger(v) && v >= 1 && v <= RIG_LOAD_MAX;
+}
+
+/** 吊点横坐标改为 newX 后，引用它的吊挂件是否仍满足「左 < 右且重心位于两吊点之间」 */
+function rigPointRefError(data, pointId, newX) {
+  const byId = new Map(data.rigPoints.map((p) => [p.id, p]));
+  for (const it of data.rigItems) {
+    if (it.leftPointId !== pointId && it.rightPointId !== pointId) continue;
+    const left = byId.get(it.leftPointId);
+    const right = byId.get(it.rightPointId);
+    if (!left || !right) continue;
+    const lx = left.id === pointId ? newX : left.x;
+    const rx = right.id === pointId ? newX : right.x;
+    if (lx >= rx) {
+      return `修改后吊挂件「${it.name}」的左吊点横坐标将不再小于右吊点，请先调整该吊挂件`;
+    }
+    if (it.cogX < lx || it.cogX > rx) {
+      return `修改后吊挂件「${it.name}」的重心横坐标将不再位于两吊点之间，请先调整该吊挂件`;
+    }
+  }
+  return null;
 }
 
 /** 校验封闭时段数组：[{start, end}]，半开区间 [start, end)，单位秒 */
@@ -175,6 +203,28 @@ const validators = {
     if (!isCmHeight(body.height)) return `高必须是 0～${CM_HEIGHT_MAX} 的整数厘米`;
     return null;
   },
+  rigPoints(body) {
+    if (!isNonEmptyString(body.name, 30)) return '吊点名称必填且不超过 30 字';
+    if (!isCmCoord(body.x)) return `横坐标必须是 ${CM_COORD_MIN}～${CM_COORD_MAX} 的整数厘米`;
+    if (!isRigLoad(body.ratedLoad)) return `额定载荷必须是 1～${RIG_LOAD_MAX} 的整数千克`;
+    return null;
+  },
+  rigItems(body, data) {
+    if (!isNonEmptyString(body.name, 30)) return '吊挂件名称必填且不超过 30 字';
+    if (!isRigLoad(body.weight)) return `重量必须是 1～${RIG_LOAD_MAX} 的整数千克`;
+    if (!isCmCoord(body.cogX)) return `重心横坐标必须是 ${CM_COORD_MIN}～${CM_COORD_MAX} 的整数厘米`;
+    const left = data.rigPoints.find((p) => p.id === body.leftPointId);
+    const right = data.rigPoints.find((p) => p.id === body.rightPointId);
+    if (!left || !right) return '必须选择已存在的左右吊点';
+    if (left.id === right.id) return '左右吊点不能是同一个吊点';
+    if (left.x >= right.x) return '左吊点的横坐标必须小于右吊点，请检查左右吊点选择';
+    if (body.cogX < left.x || body.cogX > right.x) return '重心横坐标必须位于左右吊点之间（含端点）';
+    if (!isNonNegativeInt(body.start) || !isNonNegativeInt(body.end)) {
+      return '生效起止必须是不小于 0 的整数秒';
+    }
+    if (body.start >= body.end) return '生效开始秒数必须小于结束秒数';
+    return null;
+  },
 };
 
 function sanitize(collection, body) {
@@ -201,6 +251,18 @@ function sanitize(collection, body) {
       return { name: body.name.trim(), x: body.x, y: body.y, targetHeight: body.targetHeight };
     case 'obstacles':
       return { name: body.name.trim(), x: body.x, y: body.y, width: body.width, depth: body.depth, height: body.height };
+    case 'rigPoints':
+      return { name: body.name.trim(), x: body.x, ratedLoad: body.ratedLoad };
+    case 'rigItems':
+      return {
+        name: body.name.trim(),
+        weight: body.weight,
+        cogX: body.cogX,
+        leftPointId: body.leftPointId,
+        rightPointId: body.rightPointId,
+        start: body.start,
+        end: body.end,
+      };
     default:
       return {};
   }
@@ -442,9 +504,16 @@ router.get('/sightlines', (req, res) => {
   res.json(analyzeSightlines(store.load()));
 });
 
+/* ---------- 吊挂布景载荷核算 ---------- */
+
+/** 全量载荷核算：逐吊挂件力矩平衡分担，逐吊点按半开时段汇总峰值载荷与超额区间 */
+router.get('/rigging', (req, res) => {
+  res.json(analyzeRigging(store.load()));
+});
+
 /* ---------- 通用 CRUD ---------- */
 
-const COLLECTIONS = ['areas', 'edges', 'actors', 'cues', 'audiencePoints', 'targets', 'obstacles'];
+const COLLECTIONS = ['areas', 'edges', 'actors', 'cues', 'audiencePoints', 'targets', 'obstacles', 'rigPoints', 'rigItems'];
 
 router.post('/:collection', (req, res) => {
   const { collection } = req.params;
@@ -481,6 +550,12 @@ router.put('/:collection/:id', (req, res) => {
   const err = validators[collection](req.body || {}, data);
   if (err) return res.status(400).json({ error: err });
 
+  // 吊点横坐标修改后，引用它的吊挂件仍需满足「左 < 右且重心位于两吊点之间」（先校验再写入）
+  if (collection === 'rigPoints') {
+    const refErr = rigPointRefError(data, id, req.body.x);
+    if (refErr) return res.status(400).json({ error: refErr });
+  }
+
   Object.assign(item, sanitize(collection, req.body));
 
   if (collection === 'edges') {
@@ -501,6 +576,17 @@ router.delete('/:collection/:id', (req, res) => {
   const data = store.load();
   const idx = data[collection].findIndex((x) => x.id === id);
   if (idx === -1) return res.status(404).json({ error: '记录不存在' });
+
+  // 吊点被吊挂件引用时提示并拒绝删除
+  if (collection === 'rigPoints') {
+    const refs = data.rigItems.filter((it) => it.leftPointId === id || it.rightPointId === id);
+    if (refs.length > 0) {
+      const names = refs.map((r) => `「${r.name}」`).slice(0, 5).join('、');
+      return res.status(409).json({
+        error: `无法删除：该吊点被 ${refs.length} 个吊挂件引用（${names}${refs.length > 5 ? ' 等' : ''}），请先删除或修改相关吊挂件`,
+      });
+    }
+  }
 
   data[collection].splice(idx, 1);
 
